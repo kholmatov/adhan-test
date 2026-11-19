@@ -1,5 +1,5 @@
 {
-  "threshold": 0.8,
+  "threshold": 0.7,
   "consecutive": 10,
   "segment_s": 10.0,
   "step_s": 2.4,
