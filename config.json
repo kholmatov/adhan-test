@@ -1,0 +1,10 @@
+{
+  "threshold": 0.8,
+  "consecutive": 10,
+  "segment_s": 10.0,
+  "step_s": 2.4,
+  "silence_db": -50,
+  "min_active": 0.3,
+  "sample_rate": 16000,
+  "open_only": true
+}

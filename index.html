@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adhan Detector Test</title>
+<meta name="description" content="Recite or play the adhan near your microphone and see whether the detector recognizes it. Runs entirely in your browser.">
+<style>
+:root {
+  --bg: #f6f5f1; --card: #ffffff; --ink: #1d2320; --muted: #66706b; --line: #e3e1d9;
+  --wait: #858d89; --ok: #1d7a4b; --ok-bg: #e4f2e9; --warn: #b5761c; --bar: #2d6e9e;
+  --mark-adhan: #1d7a4b; --mark-iqama: #7a4bb5; --mark-other: #858d89; --danger: #b23b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111513; --card: #1a1f1c; --ink: #e7ebe8; --muted: #9aa39e; --line: #2b322e;
+    --wait: #7c8580; --ok: #4fc487; --ok-bg: #16301f; --warn: #e2aa4c; --bar: #70a9d8;
+    --mark-adhan: #4fc487; --mark-iqama: #b48ae6; --mark-other: #7c8580; --danger: #e07070;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111513; --card: #1a1f1c; --ink: #e7ebe8; --muted: #9aa39e; --line: #2b322e;
+  --wait: #7c8580; --ok: #4fc487; --ok-bg: #16301f; --warn: #e2aa4c; --bar: #70a9d8;
+  --mark-adhan: #4fc487; --mark-iqama: #b48ae6; --mark-other: #7c8580; --danger: #e07070;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font: 16px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 880px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.3px; }
+.lead { color: var(--muted); margin: 0 0 18px; }
+.status { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+          padding: 32px 20px; text-align: center; transition: background .3s, border-color .3s; }
+.status.on { background: var(--ok-bg); border-color: var(--ok); }
+.big { font-size: clamp(30px, 7vw, 56px); font-weight: 700; letter-spacing: -0.5px; color: var(--wait); }
+.status.on .big { color: var(--ok); }
+.sub { color: var(--muted); font-size: 17px; margin-top: 6px; min-height: 26px; }
+.controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 18px; }
+button, .file { font: inherit; font-size: 15px; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line);
+                background: var(--card); color: var(--ink); cursor: pointer; }
+button.primary { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 600; }
+button.stop { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+button:disabled { opacity: .45; cursor: default; }
+.file input { display: none; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-top: 14px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.label { color: var(--muted); font-size: 13px; }
+.value { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.meter { height: 8px; background: var(--line); border-radius: 4px; margin-top: 8px; position: relative; overflow: hidden; }
+.meter i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--bar); border-radius: 4px; }
+.meter b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--warn); }
+h2 { font-size: 15px; color: var(--muted); font-weight: 600; margin: 24px 0 8px; }
+canvas { width: 100%; height: 170px; display: block; }
+.legend { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.legend span { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin: 0 4px 0 12px; }
+.legend span:first-child { margin-left: 0; }
+.marks { display: flex; gap: 8px; flex-wrap: wrap; }
+.marks button { flex: 1 1 140px; }
+.marks button[data-m="adhan"] { border-color: var(--mark-adhan); color: var(--mark-adhan); }
+.marks button[data-m="iqama"] { border-color: var(--mark-iqama); color: var(--mark-iqama); }
+.marks button.active { color: #fff; }
+.marks button[data-m="adhan"].active { background: var(--mark-adhan); }
+.marks button[data-m="iqama"].active { background: var(--mark-iqama); }
+.marks button[data-m="other"].active { background: var(--mark-other); border-color: var(--mark-other); }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 15px; }
+td { padding: 6px 4px; border-bottom: 1px solid var(--line); }
+td.hit { color: var(--ok); font-weight: 600; }
+.steps { margin: 0; padding-left: 20px; }
+.steps li { margin: 4px 0; }
+.note { color: var(--muted); font-size: 14px; }
+.err { color: var(--danger); }
+.row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+footer { color: var(--muted); font-size: 13px; margin-top: 28px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Adhan Detector — live test</h1>
+  <p class="lead">Recite or play the adhan near your microphone. The detector listens for about 30 seconds
+    of adhan before it confirms. Everything runs in your browser — no audio is uploaded.</p>
+
+  <div id="status" class="status">
+    <div class="big" id="big">Not listening</div>
+    <div class="sub" id="sub">Loading the model…</div>
+    <div class="controls">
+      <button id="start" class="primary" disabled>Start listening</button>
+      <button id="reset" disabled>Reset</button>
+      <label class="file" id="fileBtn">Test with an audio file<input type="file" id="file" accept="audio/*,video/*"></label>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Confidence over ~30 s (threshold <span id="thr">–</span>)</div>
+      <div class="value" id="score">–</div>
+      <div class="meter"><i id="scoreBar"></i><b id="thrMark"></b></div>
+    </div>
+    <div class="card">
+      <div class="label">Last 10 seconds</div>
+      <div class="value" id="p">–</div>
+      <div class="meter"><i id="pBar"></i></div>
+    </div>
+    <div class="card">
+      <div class="label">Microphone level</div>
+      <div class="value" id="db">–</div>
+      <div class="meter"><i id="dbBar"></i></div>
+    </div>
+  </div>
+
+  <h2>What are you reciting? (helps us improve the model)</h2>
+  <div class="marks" id="marks">
+    <button data-m="adhan">Adhan</button>
+    <button data-m="iqama">Iqama</button>
+    <button data-m="other">Something else</button>
+  </div>
+  <p class="note">Tap before you start and again when you switch. The marks are saved with your recording.</p>
+
+  <h2>Timeline</h2>
+  <div class="card">
+    <canvas id="chart"></canvas>
+    <div class="legend"><span style="background:var(--bar)"></span>last 10 s
+      <span style="background:var(--ok)"></span>~30 s average
+      <span style="background:var(--warn)"></span>threshold
+      <span style="background:var(--line);height:8px"></span>loudness
+      <span style="background:var(--mark-iqama)"></span>your marks</div>
+  </div>
+
+  <div class="row">
+    <h2>Detections</h2>
+    <div class="controls" style="margin:0">
+      <button id="dlWav" disabled>Download recording</button>
+      <button id="dlJson" disabled>Download results</button>
+    </div>
+  </div>
+  <div class="card"><table id="log"><tbody><tr><td class="note">Nothing yet.</td></tr></tbody></table></div>
+
+  <h2>How to help</h2>
+  <div class="card">
+    <ol class="steps">
+      <li>Press <b>Start listening</b> and allow the microphone.</li>
+      <li>Tap <b>Adhan</b>, then recite the full adhan. Tap <b>Iqama</b> before the iqama.</li>
+      <li>Try different distances and volumes, with a pause of ~10 s in between.</li>
+      <li>Press <b>Download recording</b> and <b>Download results</b> and send both files to us.</li>
+    </ol>
+  </div>
+
+  <footer>Works best in Chrome, Edge, Firefox or Safari on a laptop or phone. The model (~17 MB) downloads once.
+    Audio is processed on your device and only leaves it if you download and send it yourself.</footer>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const SR = 16000, WIN = 160000, STEP = 38400, FRAME = 15360, HOP = 7680, HIST = 250;
+
+let cfg, session, inputName;
+const st = {
+  running: false, source: null, buf: new Float32Array(0), win: new Float32Array(WIN),
+  probs: [], quietRun: 0, history: [], tAudio: 0, adhanAt: null, level: -90, p: 0,
+  rec: [], recLen: 0, events: [], marks: [], mark: null, busy: false, queue: [],
+};
+
+// ---------- model ----------
+async function init() {
+  try {
+    cfg = await (await fetch("config.json")).json();
+    ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
+    ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+    session = await ort.InferenceSession.create("adhan_detector.onnx", { executionProviders: ["wasm"] });
+    inputName = session.inputNames[0];
+    $("thr").textContent = cfg.threshold;
+    $("thrMark").style.left = `${cfg.threshold * 100}%`;
+    $("start").disabled = false;
+    $("sub").textContent = "Ready. Press Start listening.";
+  } catch (e) {
+    console.error(e);
+    $("sub").innerHTML = '<span class="err">Could not load the model. Please reload the page.</span>';
+  }
+}
+
+async function predict(win) {
+  const out = await session.run({ [inputName]: new ort.Tensor("float32", win, [WIN]) });
+  return out[session.outputNames[0]].data[0];
+}
+
+// ---------- detection (same rule as the device) ----------
+function activeFraction(win) {
+  let active = 0, n = 0;
+  for (let s = 0; s + FRAME <= win.length; s += HOP, n++) {
+    let e = 0;
+    for (let i = s; i < s + FRAME; i++) e += win[i] * win[i];
+    if (10 * Math.log10(e / FRAME + 1e-18) > cfg.silence_db) active++;
+  }
+  return active / Math.max(1, n);
+}
+
+async function step(chunk, now) {
+  st.win.copyWithin(0, STEP);
+  st.win.set(chunk, WIN - STEP);
+  st.tAudio += STEP / SR;
+  let e = 0;
+  for (let i = 0; i < chunk.length; i++) e += chunk[i] * chunk[i];
+  st.level = 10 * Math.log10(e / chunk.length + 1e-18);
+  const quiet = activeFraction(st.win) < cfg.min_active;
+  let p = null;
+  if (quiet) {
+    st.quietRun++;
+    if (st.quietRun * 2.4 >= 60) st.probs = [];
+  } else {
+    st.quietRun = 0;
+    p = await predict(st.win);
+    st.p = p;
+    st.probs.push(p);
+    if (st.probs.length > cfg.consecutive) st.probs.shift();
+  }
+  const score = st.probs.length === cfg.consecutive ? st.probs.reduce((a, b) => a + b, 0) / cfg.consecutive : 0;
+  st.history.push({ t: st.tAudio, p, score, level: st.level, mark: st.mark });
+  if (st.history.length > HIST) st.history.shift();
+  if (st.adhanAt !== null && now - st.adhanAt >= 30 * 60) {
+    st.adhanAt = null;
+    logEvent("Reset after 30 min", 0);
+  }
+  if (score >= cfg.threshold && st.adhanAt === null) {
+    st.adhanAt = now;
+    logEvent("Adhan detected", score);
+  }
+  st.score = score;
+}
+
+function clock() { return st.source === "mic" ? performance.now() / 1000 : st.tAudio; }
+
+function logEvent(what, score) {
+  st.events.push({ at_s: +st.tAudio.toFixed(1), time: new Date().toLocaleTimeString(), event: what,
+                   score: +score.toFixed(3), mark: st.mark });
+  renderLog();
+}
+
+async function feed(x) {
+  // x: Float32Array at 16 kHz
+  const merged = new Float32Array(st.buf.length + x.length);
+  merged.set(st.buf); merged.set(x, st.buf.length);
+  let off = 0;
+  while (merged.length - off >= STEP) {
+    await step(merged.subarray(off, off + STEP), clock());
+    off += STEP;
+  }
+  st.buf = merged.slice(off);
+}
+
+// serialize mic chunks so inference never overlaps
+function enqueue(x) {
+  st.queue.push(x);
+  if (st.busy) return;
+  st.busy = true;
+  (async () => {
+    while (st.queue.length) {
+      const parts = st.queue.splice(0);
+      const len = parts.reduce((a, b) => a + b.length, 0);
+      const all = new Float32Array(len); let o = 0;
+      for (const p of parts) { all.set(p, o); o += p.length; }
+      await feed(all);
+    }
+    st.busy = false;
+  })();
+}
+
+function keepRecording(x) {
+  const pcm = new Int16Array(x.length);
+  for (let i = 0; i < x.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, x[i] * 32767));
+  st.rec.push(pcm); st.recLen += pcm.length;
+}
+
+// ---------- microphone ----------
+let ctx, stream, proc, resampler;
+
+function makeResampler(inRate) {
+  // anti-alias with a short moving average, then linear interpolation to 16 kHz
+  const ratio = inRate / SR, taps = Math.max(1, Math.round(ratio));
+  let hist = new Float32Array(0), pos = 0;
+  return x => {
+    const data = new Float32Array(hist.length + x.length);
+    data.set(hist); data.set(x, hist.length);
+    const sm = new Float32Array(data.length);
+    let acc = 0;
+    for (let i = 0; i < data.length; i++) {
+      acc += data[i]; if (i >= taps) acc -= data[i - taps];
+      sm[i] = acc / Math.min(i + 1, taps);
+    }
+    const out = [];
+    while (pos + 1 < sm.length) {
+      const i = Math.floor(pos), f = pos - i;
+      out.push(sm[i] * (1 - f) + sm[i + 1] * f);
+      pos += ratio;
+    }
+    const keep = Math.max(0, Math.floor(pos) - taps);
+    hist = data.slice(keep); pos -= keep;
+    return Float32Array.from(out);
+  };
+}
+
+async function startMic() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+  } catch (e) {
+    $("sub").innerHTML = '<span class="err">Microphone access was blocked. Allow it in the browser and try again.</span>';
+    return;
+  }
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  await ctx.resume();
+  resampler = makeResampler(ctx.sampleRate);
+  const src = ctx.createMediaStreamSource(stream);
+  proc = ctx.createScriptProcessor(4096, 1, 1);
+  proc.onaudioprocess = ev => {
+    const x = resampler(ev.inputBuffer.getChannelData(0));
+    keepRecording(x);
+    enqueue(x);
+  };
+  src.connect(proc);
+  const mute = ctx.createGain(); mute.gain.value = 0;
+  proc.connect(mute); mute.connect(ctx.destination);
+  resetState(true);
+  st.source = "mic"; st.running = true;
+  $("start").textContent = "Stop listening"; $("start").className = "stop";
+  $("reset").disabled = false; $("fileBtn").style.display = "none";
+}
+
+function stopMic() {
+  if (proc) { proc.disconnect(); proc.onaudioprocess = null; }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  if (ctx) ctx.close();
+  st.running = false;
+  $("start").textContent = "Start listening"; $("start").className = "primary";
+  $("fileBtn").style.display = "";
+  $("big").textContent = st.adhanAt !== null ? "Adhan detected" : "Not listening";
+  $("sub").textContent = st.recLen ? "Stopped. You can download the recording below." : "Stopped.";
+  updateDownloads();
+}
+
+// ---------- file test ----------
+async function runFile(file) {
+  if (st.running) return;
+  resetState(true);
+  st.source = "file";
+  $("big").textContent = "Analyzing file…"; $("sub").textContent = file.name;
+  try {
+    const raw = await file.arrayBuffer();
+    const tmp = new (window.AudioContext || window.webkitAudioContext)();
+    const decoded = await tmp.decodeAudioData(raw); tmp.close();
+    const off = new OfflineAudioContext(1, Math.ceil(decoded.duration * SR), SR);
+    const s = off.createBufferSource(); s.buffer = decoded; s.connect(off.destination); s.start();
+    const x = (await off.startRendering()).getChannelData(0);
+    keepRecording(x);
+    for (let o = 0; o < x.length; o += STEP * 5) {
+      await feed(x.subarray(o, Math.min(x.length, o + STEP * 5)));
+      $("sub").textContent = `${file.name} — ${Math.round(Math.min(o + STEP * 5, x.length) / x.length * 100)}%`;
+      render();
+      await new Promise(r => setTimeout(r, 0));
+    }
+    const hits = st.events.filter(e => e.event === "Adhan detected").length;
+    $("big").textContent = hits ? "Adhan detected" : "No adhan detected";
+    $("status").classList.toggle("on", !!hits);
+    $("sub").textContent = `${file.name} — ${(x.length / SR / 60).toFixed(1)} min analyzed, ${hits} detection(s)`;
+  } catch (e) {
+    console.error(e);
+    $("big").textContent = "Could not read the file";
+    $("sub").textContent = "Try an mp3, m4a or wav file.";
+  }
+  st.source = null;
+  updateDownloads();
+}
+
+function resetState(full) {
+  st.probs = []; st.quietRun = 0; st.adhanAt = null; st.score = 0; st.p = 0;
+  if (full) {
+    st.buf = new Float32Array(0); st.win = new Float32Array(WIN); st.history = []; st.tAudio = 0;
+    st.rec = []; st.recLen = 0; st.events = []; st.marks = []; setMark(null);
+    renderLog();
+  }
+}
+
+// ---------- marks ----------
+function setMark(m) {
+  st.mark = m;
+  document.querySelectorAll("#marks button").forEach(b => b.classList.toggle("active", b.dataset.m === m));
+  if (m) st.marks.push({ at_s: +st.tAudio.toFixed(1), mark: m });
+}
+$("marks").onclick = ev => {
+  const m = ev.target.dataset && ev.target.dataset.m;
+  if (m) setMark(st.mark === m ? null : m);
+};
+
+// ---------- downloads ----------
+function wavBlob() {
+  const n = st.recLen, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, "data"); v.setUint32(40, n * 2, true);
+  let o = 44;
+  for (const c of st.rec) { new Int16Array(buf, o, c.length).set(c); o += c.length * 2; }
+  return new Blob([buf], { type: "audio/wav" });
+}
+function stamp() { return new Date().toISOString().slice(0, 19).replace(/[-:T]/g, ""); }
+function save(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+function updateDownloads() {
+  const idle = !st.running && st.source !== "file";
+  $("dlWav").disabled = !(idle && st.recLen);
+  $("dlJson").disabled = !(idle && st.history.length);
+}
+$("dlWav").onclick = () => save(wavBlob(), `adhan-test-${stamp()}.wav`);
+$("dlJson").onclick = () => save(new Blob([JSON.stringify({
+  created: new Date().toISOString(), userAgent: navigator.userAgent, config: cfg,
+  duration_s: +(st.recLen / SR).toFixed(1), detections: st.events, marks: st.marks,
+  timeline: st.history.map(h => ({ t: +h.t.toFixed(1), p: h.p === null ? null : +h.p.toFixed(3),
+                                  score: +h.score.toFixed(3), level_db: +h.level.toFixed(1), mark: h.mark })),
+}, null, 1)], { type: "application/json" }), `adhan-test-${stamp()}.json`);
+
+// ---------- buttons ----------
+$("start").onclick = () => st.running ? stopMic() : startMic();
+$("reset").onclick = () => { resetState(false); logEvent("Manual reset", 0); };
+$("file").onchange = ev => { const f = ev.target.files[0]; if (f) runFile(f); ev.target.value = ""; };
+
+// ---------- render ----------
+function renderLog() {
+  const rows = st.events.slice().reverse().map(e =>
+    `<tr><td>${e.time}</td><td>${fmt(e.at_s)}</td><td class="${e.event === "Adhan detected" ? "hit" : ""}">${e.event}</td>` +
+    `<td>${e.event === "Adhan detected" ? e.score.toFixed(2) : ""}</td><td class="note">${e.mark ? "you marked: " + e.mark : ""}</td></tr>`);
+  $("log").tBodies[0].innerHTML = rows.join("") || '<tr><td class="note">Nothing yet.</td></tr>';
+}
+function fmt(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+
+function drawChart() {
+  const c = $("chart"), g = c.getContext("2d"), dpr = devicePixelRatio || 1;
+  const w = c.width = c.clientWidth * dpr, h = c.height = 170 * dpr;
+  g.clearRect(0, 0, w, h);
+  const y = v => h - 6 * dpr - v * (h - 12 * dpr), H = st.history;
+  const x = i => (i + HIST - H.length) / (HIST - 1) * w;
+  const colors = { adhan: css("--mark-adhan"), iqama: css("--mark-iqama"), other: css("--mark-other") };
+  H.forEach((r, i) => { if (r.mark) { g.fillStyle = colors[r.mark]; g.globalAlpha = 0.12; g.fillRect(x(i), 0, w / HIST + 1, h); } });
+  g.globalAlpha = 1;
+  g.fillStyle = css("--line");
+  H.forEach((r, i) => { const v = Math.max(0, Math.min(1, (r.level + 70) / 70)); g.fillRect(x(i), y(v), Math.max(2, w / HIST - 1), h - 6 * dpr - y(v)); });
+  g.strokeStyle = css("--warn"); g.lineWidth = dpr; g.setLineDash([6 * dpr, 4 * dpr]);
+  g.beginPath(); g.moveTo(0, y(cfg.threshold)); g.lineTo(w, y(cfg.threshold)); g.stroke(); g.setLineDash([]);
+  [["p", "--bar", 1.5], ["score", "--ok", 2.5]].forEach(([k, col, lw]) => {
+    g.strokeStyle = css(col); g.lineWidth = lw * dpr; g.beginPath(); let pen = false;
+    H.forEach((r, i) => { if (r[k] === null) { pen = false; return; }
+      pen ? g.lineTo(x(i), y(r[k])) : g.moveTo(x(i), y(r[k])); pen = true; });
+    g.stroke();
+  });
+}
+
+function render() {
+  if (!cfg) return;
+  if (st.source === "mic") {
+    const on = st.adhanAt !== null;
+    $("status").classList.toggle("on", on);
+    if (on) {
+      const since = Math.floor(clock() - st.adhanAt);
+      $("big").textContent = "Adhan detected";
+      $("sub").textContent = `${Math.floor(since / 60)} min ago · resets in ${fmt(30 * 60 - since)}`;
+    } else {
+      $("big").textContent = "Listening…";
+      $("sub").textContent = st.quietRun > 0 ? "Quiet — waiting for sound"
+        : st.probs.length < cfg.consecutive ? `Collecting sound… ${st.probs.length}/${cfg.consecutive}` : "Waiting for the adhan";
+    }
+  }
+  const sc = Math.max(0, st.score || 0), pp = Math.max(0, st.p || 0);
+  $("score").textContent = sc.toFixed(2);
+  $("scoreBar").style.width = `${sc * 100}%`;
+  $("p").textContent = pp.toFixed(2);
+  $("pBar").style.width = `${pp * 100}%`;
+  $("db").textContent = st.history.length ? `${st.level.toFixed(0)} dB` : "–";
+  $("dbBar").style.width = `${Math.max(0, Math.min(100, (st.level + 70) / 70 * 100))}%`;
+  drawChart();
+}
+setInterval(render, 500);
+window.addEventListener("resize", drawChart);
+init();
+</script>
+</body>
+</html>
