@@ -301,16 +301,24 @@ function makeResampler(inRate) {
 }
 
 async function startMic() {
+  // Safari/iOS: the audio context must be created and resumed inside the click itself
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const resumed = ctx.resume();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $("sub").innerHTML = '<span class="err">This browser cannot use the microphone here. Open the link in Chrome or Safari (not inside WhatsApp/Telegram).</span>';
+    return;
+  }
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
   } catch (e) {
-    $("sub").innerHTML = '<span class="err">Microphone access was blocked. Allow it in the browser and try again.</span>';
+    ctx.close();
+    $("sub").innerHTML = '<span class="err">Microphone access was blocked. Allow it in the browser settings and try again.</span>';
     return;
   }
-  ctx = new (window.AudioContext || window.webkitAudioContext)();
-  await ctx.resume();
+  await resumed;
+  if (ctx.state !== "running") await ctx.resume();
   resampler = makeResampler(ctx.sampleRate);
   const src = ctx.createMediaStreamSource(stream);
   proc = ctx.createScriptProcessor(4096, 1, 1);
@@ -323,7 +331,7 @@ async function startMic() {
   const mute = ctx.createGain(); mute.gain.value = 0;
   proc.connect(mute); mute.connect(ctx.destination);
   resetState(true);
-  st.source = "mic"; st.running = true;
+  st.source = "mic"; st.running = true; st.startedAt = clock();
   $("start").textContent = "Stop listening"; $("start").className = "stop";
   $("reset").disabled = false; $("fileBtn").style.display = "none";
 }
@@ -468,6 +476,9 @@ function render() {
       const since = Math.floor(clock() - st.adhanAt);
       $("big").textContent = "Adhan detected";
       $("sub").textContent = `${Math.floor(since / 60)} min ago · resets in ${fmt(30 * 60 - since)}`;
+    } else if (!st.history.length && clock() - st.startedAt > 6) {
+      $("big").textContent = "No sound";
+      $("sub").innerHTML = '<span class="err">The microphone sends no audio. Reload the page, press Start and allow the microphone. In WhatsApp/Telegram, open the link in Safari or Chrome.</span>';
     } else {
       $("big").textContent = "Listening…";
       $("sub").textContent = st.quietRun > 0 ? "Quiet — waiting for sound"
