@@ -363,6 +363,7 @@ async function startMic() {
   // phones pause audio (call, screen lock, other app): resume on the next tap
   ctx.onstatechange = () => { if (st.running && ctx.state !== "running") needTap = true; };
   diag.rate = ctx.sampleRate;
+  try { diag.track = stream.getAudioTracks()[0].getSettings(); } catch (e) {}
   resampler = makeResampler(ctx.sampleRate);
   const src = ctx.createMediaStreamSource(stream);
   proc = ctx.createScriptProcessor(4096, 1, 1);
@@ -485,7 +486,7 @@ function updateDownloads() {
 }
 $("dlWav").onclick = () => save(wavBlob(), `adhan-test-${stamp()}.wav`);
 $("dlJson").onclick = () => save(new Blob([JSON.stringify({
-  created: new Date().toISOString(), userAgent: navigator.userAgent, config: cfg,
+  created: new Date().toISOString(), userAgent: navigator.userAgent, config: cfg, diag,
   duration_s: +(st.recLen / SR).toFixed(1), detections: st.events, marks: st.marks,
   timeline: st.history.map(h => ({ t: +h.t.toFixed(1), p: h.p === null ? null : +h.p.toFixed(3),
                                   score: +h.score.toFixed(3), level_db: +h.level.toFixed(1), mark: h.mark })),
