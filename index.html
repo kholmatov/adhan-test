@@ -145,7 +145,9 @@ footer { color: var(--muted); font-size: 13px; margin-top: 28px; }
   </div>
 
   <footer>Works best in Chrome, Edge, Firefox or Safari on a laptop or phone. The model (~17 MB) downloads once.
-    Audio is processed on your device and only leaves it if you download and send it yourself.</footer>
+    Audio is processed on your device and only leaves it if you download and send it yourself.
+    On a phone, keep the screen on and this page open while testing.</footer>
+  <p class="note" id="diag" style="font-size:12px;word-break:break-word"></p>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
@@ -165,19 +167,48 @@ const st = {
 // ---------- model ----------
 async function init() {
   try {
-    cfg = await (await fetch("config.json")).json();
+    if (typeof ort === "undefined") throw new Error("onnxruntime script did not load (network or blocker)");
+    cfg = await (await fetch("config.json", { cache: "no-cache" })).json();
     ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
     ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
-    session = await ort.InferenceSession.create("adhan_detector.onnx", { executionProviders: ["wasm"] });
+    // download with progress: 17 MB is slow on mobile data
+    const r = await fetch("adhan_detector.onnx");
+    if (!r.ok) throw new Error(`model download failed: HTTP ${r.status}`);
+    const total = +r.headers.get("content-length") || 17.5e6, chunks = []; let got = 0;
+    const reader = r.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      chunks.push(value); got += value.length;
+      $("sub").textContent = `Loading the model… ${Math.min(99, Math.round(got / total * 100))}%`;
+    }
+    const model = new Uint8Array(got); let o = 0;
+    for (const c of chunks) { model.set(c, o); o += c.length; }
+    $("sub").textContent = "Starting the model…";
+    session = await ort.InferenceSession.create(model, { executionProviders: ["wasm"] });
+    inputName = session.inputNames[0];
+    const t0 = performance.now(); await predict(new Float32Array(WIN)); diag.inferMs = performance.now() - t0;
     inputName = session.inputNames[0];
     $("thr").textContent = cfg.threshold;
     $("thrMark").style.left = `${cfg.threshold * 100}%`;
     $("start").disabled = false;
     $("sub").textContent = "Ready. Press Start listening.";
   } catch (e) {
-    console.error(e);
+    console.error(e); diag.error = String(e && e.message || e);
     $("sub").innerHTML = '<span class="err">Could not load the model. Please reload the page.</span>';
   }
+}
+
+// ---------- diagnostics (shown at the bottom; helps us debug phones) ----------
+const diag = { error: "", chunks: 0, inferMs: 0, steps: 0, rate: 0, ctx: "" };
+window.addEventListener("error", e => { diag.error = String(e.message || e); });
+window.addEventListener("unhandledrejection", e => { diag.error = String(e.reason && e.reason.message || e.reason); });
+function renderDiag() {
+  const ctxState = typeof ctx !== "undefined" && ctx ? ctx.state : "–";
+  $("diag").textContent = [
+    `model: ${session ? "ok" : "not loaded"}`, `audio ctx: ${ctxState}`, `rate: ${diag.rate || "–"} Hz`,
+    `audio blocks: ${diag.chunks}`, `steps: ${diag.steps}`, `inference: ${diag.inferMs ? diag.inferMs.toFixed(0) + " ms" : "–"}`,
+    `queue: ${st.queue.length}`, diag.error ? `error: ${diag.error}` : "",
+  ].filter(Boolean).join(" · ");
 }
 
 async function predict(win) {
@@ -210,7 +241,9 @@ async function step(chunk, now) {
     if (st.quietRun * 2.4 >= 60) st.probs = [];
   } else {
     st.quietRun = 0;
+    const t0 = performance.now();
     p = await predict(st.win);
+    diag.inferMs = performance.now() - t0;
     st.p = p;
     st.probs.push(p);
     if (st.probs.length > cfg.consecutive) st.probs.shift();
@@ -227,6 +260,7 @@ async function step(chunk, now) {
     logEvent("Adhan detected", score);
   }
   st.score = score;
+  diag.steps++;
 }
 
 function clock() { return st.source === "mic" ? performance.now() / 1000 : st.tAudio; }
@@ -255,14 +289,21 @@ function enqueue(x) {
   if (st.busy) return;
   st.busy = true;
   (async () => {
-    while (st.queue.length) {
-      const parts = st.queue.splice(0);
-      const len = parts.reduce((a, b) => a + b.length, 0);
-      const all = new Float32Array(len); let o = 0;
-      for (const p of parts) { all.set(p, o); o += p.length; }
-      await feed(all);
+    try {
+      while (st.queue.length) {
+        let parts = st.queue.splice(0);
+        // slow phone: if we fell more than ~20 s behind, drop the oldest audio instead of lagging forever
+        let len = parts.reduce((a, b) => a + b.length, 0);
+        while (len > 20 * SR && parts.length > 1) len -= parts.shift().length;
+        const all = new Float32Array(len); let o = 0;
+        for (const p of parts) { all.set(p, o); o += p.length; }
+        await feed(all);
+      }
+    } catch (e) {
+      console.error(e); diag.error = String(e && e.message || e);
+    } finally {
+      st.busy = false;   // never get stuck: a single failed step used to stop all processing
     }
-    st.busy = false;
   })();
 }
 
@@ -317,16 +358,21 @@ async function startMic() {
     $("sub").innerHTML = '<span class="err">Microphone access was blocked. Allow it in the browser settings and try again.</span>';
     return;
   }
-  await resumed;
-  if (ctx.state !== "running") await ctx.resume();
+  try { await resumed; } catch (e) {}
+  if (ctx.state !== "running") { try { await ctx.resume(); } catch (e) {} }
+  // phones pause audio (call, screen lock, other app): resume on the next tap
+  ctx.onstatechange = () => { if (st.running && ctx.state !== "running") needTap = true; };
+  diag.rate = ctx.sampleRate;
   resampler = makeResampler(ctx.sampleRate);
   const src = ctx.createMediaStreamSource(stream);
   proc = ctx.createScriptProcessor(4096, 1, 1);
   proc.onaudioprocess = ev => {
+    diag.chunks++;
     const x = resampler(ev.inputBuffer.getChannelData(0));
     keepRecording(x);
     enqueue(x);
   };
+  keepAwake();
   src.connect(proc);
   const mute = ctx.createGain(); mute.gain.value = 0;
   proc.connect(mute); mute.connect(ctx.destination);
@@ -336,7 +382,20 @@ async function startMic() {
   $("reset").disabled = false; $("fileBtn").style.display = "none";
 }
 
+let needTap = false, wakeLock = null;
+async function keepAwake() {
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && st.running) { keepAwake(); if (ctx && ctx.state !== "running") needTap = true; }
+});
+document.addEventListener("click", () => {
+  if (needTap && ctx && st.running) { ctx.resume().then(() => { needTap = ctx.state !== "running"; }); }
+}, true);
+
 function stopMic() {
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  needTap = false;
   if (proc) { proc.disconnect(); proc.onaudioprocess = null; }
   if (stream) stream.getTracks().forEach(t => t.stop());
   if (ctx) ctx.close();
@@ -447,6 +506,7 @@ function renderLog() {
 function fmt(s) { s = Math.round(s); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
 
 function drawChart() {
+  if (!cfg) return;
   const c = $("chart"), g = c.getContext("2d"), dpr = devicePixelRatio || 1;
   const w = c.width = c.clientWidth * dpr, h = c.height = 170 * dpr;
   g.clearRect(0, 0, w, h);
@@ -476,6 +536,9 @@ function render() {
       const since = Math.floor(clock() - st.adhanAt);
       $("big").textContent = "Adhan detected";
       $("sub").textContent = `${Math.floor(since / 60)} min ago · resets in ${fmt(30 * 60 - since)}`;
+    } else if (needTap) {
+      $("big").textContent = "Paused";
+      $("sub").innerHTML = '<span class="err">The phone paused the microphone. Tap anywhere to continue, and keep the screen on.</span>';
     } else if (!st.history.length && clock() - st.startedAt > 6) {
       $("big").textContent = "No sound";
       $("sub").innerHTML = '<span class="err">The microphone sends no audio. Reload the page, press Start and allow the microphone. In WhatsApp/Telegram, open the link in Safari or Chrome.</span>';
@@ -493,6 +556,7 @@ function render() {
   $("db").textContent = st.history.length ? `${st.level.toFixed(0)} dB` : "–";
   $("dbBar").style.width = `${Math.max(0, Math.min(100, (st.level + 70) / 70 * 100))}%`;
   drawChart();
+  renderDiag();
 }
 setInterval(render, 500);
 window.addEventListener("resize", drawChart);
