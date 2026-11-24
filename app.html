@@ -1,0 +1,862 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Детектор азана</title>
+<meta name="description" content="Слушает азан в окна намазов и показывает «Азан прозвучал». Время намазов считается по городу или GPS, без интернета.">
+<meta name="theme-color" content="#165c3e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root {
+  --bg: #f4f3ee; --card: #ffffff; --ink: #18201c; --muted: #66706b; --line: #e2e0d8; --soft: #efeee8;
+  --accent: #165c3e; --accent-ink: #ffffff; --ok: #1a7a4a; --ok-bg: #e2f2e8; --listen: #2a6fa8; --listen-bg: #e5eff8;
+  --warn: #a8681a; --warn-bg: #f8eedd; --danger: #b23b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1412; --card: #171d1a; --ink: #e8ece9; --muted: #98a29d; --line: #29312d; --soft: #1e2521;
+    --accent: #2f9a68; --accent-ink: #ffffff; --ok: #52c88b; --ok-bg: #12301f; --listen: #6fb0e6; --listen-bg: #13263a;
+    --warn: #e3aa4f; --warn-bg: #33270f; --danger: #e07070;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1412; --card: #171d1a; --ink: #e8ece9; --muted: #98a29d; --line: #29312d; --soft: #1e2521;
+  --accent: #2f9a68; --accent-ink: #ffffff; --ok: #52c88b; --ok-bg: #12301f; --listen: #6fb0e6; --listen-bg: #13263a;
+  --warn: #e3aa4f; --warn-bg: #33270f; --danger: #e07070;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+body { font: 18px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+       -webkit-tap-highlight-color: transparent; user-select: none; }
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+.app { min-height: 100%; display: flex; flex-direction: column; padding: max(16px, env(safe-area-inset-top)) 20px 16px; gap: 16px; }
+header { display: flex; align-items: center; gap: 14px; }
+.place { font-weight: 600; font-size: 20px; }
+.date { color: var(--muted); font-size: 16px; }
+header .grow { flex: 1; min-width: 0; }
+.iconbtn { width: 52px; height: 52px; border-radius: 14px; border: 1px solid var(--line); background: var(--card);
+           display: grid; place-items: center; flex: none; }
+.iconbtn svg { width: 26px; height: 26px; }
+
+.main { flex: 1; display: grid; gap: 16px; grid-template-columns: 1fr; }
+@media (min-width: 900px) and (orientation: landscape) { .main { grid-template-columns: 1.35fr 1fr; } }
+
+.left { display: flex; flex-direction: column; gap: 16px; }
+.clock { font-size: clamp(72px, 13vw, 150px); font-weight: 700; letter-spacing: -2px; line-height: 1;
+         font-variant-numeric: tabular-nums; }
+.clock small { font-size: .32em; color: var(--muted); font-weight: 600; letter-spacing: 0; margin-left: 6px; }
+
+.status { flex: 1; border-radius: 22px; padding: 26px 26px 22px; background: var(--card); border: 2px solid var(--line);
+          display: flex; flex-direction: column; gap: 10px; min-height: 230px; transition: background .3s, border-color .3s; }
+.status .tag { display: inline-flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700;
+               text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.status .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); }
+.status .big { font-size: clamp(34px, 5vw, 56px); font-weight: 700; line-height: 1.1; letter-spacing: -.5px; }
+.status .sub { font-size: 20px; color: var(--muted); }
+.status.listen { background: var(--listen-bg); border-color: var(--listen); }
+.status.listen .tag, .status.listen .big { color: var(--listen); }
+.status.listen .dot { background: var(--listen); animation: pulse 1.4s infinite; }
+.status.done { background: var(--ok-bg); border-color: var(--ok); }
+.status.done .tag, .status.done .big { color: var(--ok); }
+.status.done .dot { background: var(--ok); }
+.status.alert { background: var(--warn-bg); border-color: var(--warn); }
+.status.alert .tag, .status.alert .big { color: var(--warn); }
+.status.alert .dot { background: var(--warn); }
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
+
+.meters[hidden] { display: none; }
+.meters { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: auto; }
+.meter .lbl { font-size: 14px; color: var(--muted); display: flex; justify-content: space-between; }
+.bar { height: 10px; border-radius: 5px; background: var(--line); position: relative; overflow: hidden; margin-top: 6px; }
+.bar i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--listen); border-radius: 5px; transition: width .4s; }
+.bar b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--warn); }
+
+.actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn { min-height: 56px; padding: 0 22px; border-radius: 14px; border: 1px solid var(--line); background: var(--card);
+       font-size: 18px; font-weight: 600; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn:disabled { opacity: .45; cursor: default; }
+
+.right { display: flex; flex-direction: column; gap: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 8px 8px; }
+.prayers { list-style: none; margin: 0; padding: 0; }
+.prayers li { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 12px;
+              padding: 14px 16px; border-radius: 14px; }
+.prayers li + li { border-top: 1px solid var(--line); }
+.prayers li.next { background: var(--soft); border-top-color: transparent; }
+.prayers li.next + li { border-top-color: transparent; }
+.prayers .name { font-size: 22px; font-weight: 600; }
+.prayers .time { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.prayers .state { grid-column: 1 / -1; font-size: 15px; color: var(--muted); min-height: 0; }
+.prayers li.muted .name, .prayers li.muted .time { color: var(--muted); font-weight: 500; }
+.prayers li.muted .time { font-size: 24px; }
+.state.ok { color: var(--ok); font-weight: 600; }
+.state.miss { color: var(--warn); }
+.state.listen { color: var(--listen); font-weight: 600; }
+.small { font-size: 14px; color: var(--muted); padding: 4px 8px; }
+
+/* overlay & settings */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; z-index: 10; }
+.overlay.show { display: block; }
+.sheet { position: fixed; inset: 0; z-index: 11; display: none; overflow: auto; background: var(--bg); }
+.sheet.show { display: block; }
+.sheet .inner { max-width: 760px; margin: 0 auto; padding: max(16px, env(safe-area-inset-top)) 20px 40px; }
+.sheet h1 { font-size: 28px; margin: 6px 0 14px; display: flex; align-items: center; justify-content: space-between; }
+.sheet h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 26px 0 8px; }
+.field { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; display: grid; gap: 12px; }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.row > label { flex: 1 1 200px; display: grid; gap: 4px; font-size: 15px; color: var(--muted); }
+select, input[type=number], input[type=time], input[type=text] {
+  min-height: 50px; padding: 0 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.seg button { min-height: 50px; padding: 0 18px; border: 0; background: var(--card); font-weight: 600; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+.adj { width: 100%; border-collapse: collapse; }
+.adj td { padding: 6px 4px; }
+.adj td:first-child { font-weight: 600; width: 30%; }
+.adj input { min-height: 46px; }
+.hint { font-size: 14px; color: var(--muted); }
+.err { color: var(--danger); }
+.diag { font-size: 12px; color: var(--muted); word-break: break-word; }
+
+.start { position: fixed; inset: 0; z-index: 9; display: none; place-items: center; background: var(--bg); padding: 24px; text-align: center; }
+.start.show { display: grid; }
+.start .box { max-width: 560px; display: grid; gap: 18px; justify-items: center; }
+.start img { width: 96px; height: 96px; border-radius: 22px; }
+.start h1 { margin: 0; font-size: 34px; }
+.start p { margin: 0; color: var(--muted); font-size: 18px; }
+.start .btn { min-height: 68px; font-size: 22px; padding: 0 36px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="grow">
+      <div class="place" id="place">–</div>
+      <div class="date" id="date">–</div>
+    </div>
+    <button class="iconbtn" id="openSettings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </header>
+
+  <div class="main">
+    <section class="left">
+      <div class="clock" id="clock">--:--</div>
+      <div class="status" id="status">
+        <div class="tag"><span class="dot"></span><span id="tag">–</span></div>
+        <div class="big" id="big">–</div>
+        <div class="sub" id="sub"></div>
+        <div class="meters" id="meters" hidden>
+          <div class="meter"><div class="lbl"><span data-t="level">Громкость</span><span id="dbv">–</span></div><div class="bar"><i id="dbBar"></i></div></div>
+          <div class="meter"><div class="lbl"><span data-t="conf">Уверенность</span><span id="scv">–</span></div><div class="bar"><i id="scBar"></i><b id="thrMark"></b></div></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="testBtn" data-t="testNow">Проверить сейчас</button>
+        <button class="btn" id="resetBtn" data-t="reset" hidden>Сбросить</button>
+      </div>
+    </section>
+
+    <section class="right">
+      <div class="card"><div class="small" id="listDay" style="padding:10px 16px 0"></div><ul class="prayers" id="prayers"></ul></div>
+      <div class="small" id="hint"></div>
+    </section>
+  </div>
+</div>
+
+<div class="start show" id="start">
+  <div class="box">
+    <img src="icons/icon-192.png" alt="">
+    <h1 data-t="appName">Детектор азана</h1>
+    <p id="startText" data-t="startText">Устройство будет само включать микрофон перед каждым намазом и показывать, когда прозвучал азан.</p>
+    <button class="btn primary" id="startBtn" data-t="startBtn">Запустить</button>
+    <p class="hint" id="loadState"></p>
+  </div>
+</div>
+
+<div class="sheet" id="settings">
+  <div class="inner">
+    <h1><span data-t="settings">Настройки</span><button class="btn primary" id="closeSettings" data-t="done">Готово</button></h1>
+
+    <h2 data-t="location">Местоположение</h2>
+    <div class="field">
+      <div class="row">
+        <button class="btn primary" id="gpsBtn" data-t="gps">Определить по GPS</button>
+        <span class="hint" id="gpsState"></span>
+      </div>
+      <div class="row">
+        <label><span data-t="city">Город</span><select id="city"></select></label>
+      </div>
+      <div class="row">
+        <label><span data-t="lat">Широта</span><input type="number" id="lat" step="0.0001" inputmode="decimal"></label>
+        <label><span data-t="lng">Долгота</span><input type="number" id="lng" step="0.0001" inputmode="decimal"></label>
+      </div>
+      <div class="hint" id="tzHint"></div>
+    </div>
+
+    <h2 data-t="calc">Расчёт времени</h2>
+    <div class="field">
+      <div class="row">
+        <label><span data-t="method">Метод</span><select id="method"></select></label>
+        <label><span data-t="asr">Аср</span><select id="asr">
+          <option value="hanafi" data-t="hanafi">Ханафи (тень ×2)</option>
+          <option value="std" data-t="standard">Стандартный (тень ×1)</option>
+        </select></label>
+      </div>
+      <div class="hint" data-t="adjHint">Сверьте с расписанием вашей мечети. Если время отличается — поправьте минуты или впишите точное время вручную.</div>
+      <table class="adj" id="adj"></table>
+    </div>
+
+    <h2 data-t="listening">Прослушивание</h2>
+    <div class="field">
+      <div class="row"><span style="flex:1" data-t="preLbl">Включать микрофон до намаза за</span>
+        <div class="seg" id="pre"><button data-v="15">15 мин</button><button data-v="30">30 мин</button></div></div>
+      <div class="row"><span style="flex:1" data-t="postLbl">Слушать после времени намаза ещё</span>
+        <div class="seg" id="post"><button data-v="20">20 мин</button><button data-v="30">30 мин</button><button data-v="45">45 мин</button></div></div>
+      <div class="row"><span style="flex:1" data-t="thrLbl">Чувствительность</span>
+        <div class="seg" id="thr"><button data-v="0.7" data-t="thrHigh">Высокая</button><button data-v="0.8" data-t="thrNormal">Меньше ложных</button></div></div>
+      <div class="hint" data-t="listenHint">После того как азан распознан, микрофон выключается до следующего намаза — икама не вызовет повторного срабатывания. Через 30 минут надпись «Азан прозвучал» сбрасывается.</div>
+    </div>
+
+    <h2 data-t="screen">Экран</h2>
+    <div class="field">
+      <div class="row"><span style="flex:1" data-t="langLbl">Язык</span>
+        <div class="seg" id="lang"><button data-v="ru">Русский</button><button data-v="en">English</button></div></div>
+      <div class="row"><span style="flex:1" data-t="themeLbl">Тема</span>
+        <div class="seg" id="theme"><button data-v="auto" data-t="auto">Авто</button><button data-v="light" data-t="light">Светлая</button><button data-v="dark" data-t="dark">Тёмная</button></div></div>
+    </div>
+
+    <h2 data-t="journal">Журнал и записи</h2>
+    <div class="field">
+      <div id="journal" class="hint"></div>
+      <div class="row">
+        <button class="btn" id="dlWav" data-t="dlWav">Скачать последние 5 мин звука</button>
+        <button class="btn" id="dlLog" data-t="dlLog">Скачать журнал</button>
+      </div>
+      <div class="hint" data-t="dlHint">Звук хранится только на этом устройстве. Скачанный файл можно прислать нам для улучшения модели.</div>
+      <div class="diag" id="diag"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<script src="prayer.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const SR = 16000, WIN = 160000, STEP = 38400, FRAME = 15360, HOP = 7680;
+const PRAYERS = ["fajr", "sunrise", "dhuhr", "asr", "maghrib", "isha"];
+const LISTEN = ["fajr", "dhuhr", "asr", "maghrib", "isha"];
+const RESET_MIN = 30, TEST_MIN = 10;
+
+// ---------- texts ----------
+const TXT = {
+  ru: {
+    appName: "Детектор азана", fajr: "Фаджр", sunrise: "Восход", dhuhr: "Зухр", asr: "Аср", maghrib: "Магриб", isha: "Иша",
+    startText: "Устройство будет само включать микрофон перед каждым намазом и показывать, когда прозвучал азан.",
+    startBtn: "Запустить", loading: "Загрузка модели…", modelReady: "Модель готова. Работает без интернета.",
+    modelErr: "Не удалось загрузить модель. Проверьте интернет и перезагрузите страницу.",
+    micErr: "Нет доступа к микрофону. Разрешите микрофон в настройках браузера и нажмите «Запустить» ещё раз.",
+    settings: "Настройки", done: "Готово", location: "Местоположение", gps: "Определить по GPS", city: "Город",
+    lat: "Широта", lng: "Долгота", calc: "Расчёт времени", method: "Метод", asr2: "Аср",
+    hanafi: "Ханафи (тень ×2)", standard: "Стандартный (тень ×1)",
+    adjHint: "Сверьте с расписанием вашей мечети. Если время отличается — поправьте минуты или впишите точное время вручную.",
+    listening: "Прослушивание", preLbl: "Включать микрофон до намаза за", postLbl: "Слушать после времени намаза ещё",
+    thrLbl: "Чувствительность", thrHigh: "Высокая", thrNormal: "Меньше ложных",
+    listenHint: "После того как азан распознан, микрофон выключается до следующего намаза — икама не вызовет повторного срабатывания. Через 30 минут надпись «Азан прозвучал» сбрасывается.",
+    screen: "Экран", langLbl: "Язык", themeLbl: "Тема", auto: "Авто", light: "Светлая", dark: "Тёмная",
+    journal: "Журнал и записи", dlWav: "Скачать последние 5 мин звука", dlLog: "Скачать журнал",
+    dlHint: "Звук хранится только на этом устройстве. Скачанный файл можно прислать нам для улучшения модели.",
+    level: "Громкость", conf: "Уверенность", testNow: "Проверить сейчас", stopTest: "Остановить проверку", reset: "Сбросить",
+    min: "мин", h: "ч", minShort: "мин", offset: "поправка, мин", manual: "точное время",
+    tagWait: "Ожидание · следующий намаз", tagListen: "Слушаю", tagDone: "Азан прозвучал", tagPause: "Пауза", tagSetup: "Настройка", tagTest: "Проверка",
+    noPlace: "Укажите город", noPlaceSub: "Откройте настройки и нажмите «Определить по GPS» или выберите город.",
+    next: "{p} · {t}", inTime: "через {d}", micAt: "микрофон включится в {t}", micAtNow: "микрофон включится сейчас",
+    waitAdhan: "Жду азан · {p} {t}", until: "слушаю до {t}", quiet: "тихо — жду звук", collecting: "слушаю… {n}/{m}",
+    detected: "Азан прозвучал", detectedSub: "{p} · в {t} · сброс через {d}", testDetectedSub: "проверка · в {t} · сброс через {d}",
+    paused: "Нажмите на экран", pausedSub: "Браузер приостановил микрофон. Нажмите в любом месте и не выключайте экран.",
+    testing: "Проверка микрофона", testingSub: "Прочитайте или включите азан рядом с устройством · осталось {d}",
+    stOk: "✓ прозвучал в {t}", stMiss: "азан не обнаружен", stListen: "● слушаю сейчас", stNext: "следующий · микрофон с {t}",
+    stNoListen: "без прослушивания",
+    hintTz: "Часовой пояс устройства: {tz}. Время намазов показывается по нему.",
+    gpsWait: "Определяю…", gpsOk: "Готово: {lat}, {lng}", gpsErr: "Не удалось: {e}", gpsNo: "GPS недоступен в этом браузере",
+    near: "Рядом: {c}", custom: "Свои координаты", choose: "— выберите город —",
+    journalEmpty: "Пока пусто.", jDetected: "прозвучал", jMissed: "не обнаружен", jTest: "проверка",
+    today: "Сегодня", tomorrow: "Завтра",
+    footHint: "Не закрывайте приложение и не выключайте экран. Подключите планшет к зарядке.",
+    polar: "Сегодня время намаза нельзя вычислить для этих координат. Впишите время вручную.",
+  },
+  en: {
+    appName: "Adhan Detector", fajr: "Fajr", sunrise: "Sunrise", dhuhr: "Dhuhr", asr: "Asr", maghrib: "Maghrib", isha: "Isha",
+    startText: "The device turns on the microphone before each prayer and shows when the adhan has been called.",
+    startBtn: "Start", loading: "Loading the model…", modelReady: "Model ready. Works without internet.",
+    modelErr: "Could not load the model. Check the internet connection and reload the page.",
+    micErr: "No microphone access. Allow the microphone in the browser settings and press Start again.",
+    settings: "Settings", done: "Done", location: "Location", gps: "Use GPS", city: "City",
+    lat: "Latitude", lng: "Longitude", calc: "Prayer time calculation", method: "Method", asr2: "Asr",
+    hanafi: "Hanafi (shadow ×2)", standard: "Standard (shadow ×1)",
+    adjHint: "Compare with your mosque's timetable. If a time differs, adjust the minutes or enter the exact time.",
+    listening: "Listening", preLbl: "Turn the microphone on before the prayer", postLbl: "Keep listening after the prayer time",
+    thrLbl: "Sensitivity", thrHigh: "High", thrNormal: "Fewer false alarms",
+    listenHint: "Once the adhan is recognized, the microphone turns off until the next prayer, so the iqama does not trigger it again. “Adhan called” resets after 30 minutes.",
+    screen: "Screen", langLbl: "Language", themeLbl: "Theme", auto: "Auto", light: "Light", dark: "Dark",
+    journal: "Log and recordings", dlWav: "Download last 5 min of audio", dlLog: "Download log",
+    dlHint: "Audio stays on this device only. You can send the downloaded file to us to improve the model.",
+    level: "Loudness", conf: "Confidence", testNow: "Test now", stopTest: "Stop test", reset: "Reset",
+    min: "min", h: "h", minShort: "min", offset: "offset, min", manual: "exact time",
+    tagWait: "Waiting · next prayer", tagListen: "Listening", tagDone: "Adhan called", tagPause: "Paused", tagSetup: "Setup", tagTest: "Test",
+    noPlace: "Set your city", noPlaceSub: "Open settings and press “Use GPS” or choose a city.",
+    next: "{p} · {t}", inTime: "in {d}", micAt: "microphone turns on at {t}", micAtNow: "microphone turns on now",
+    waitAdhan: "Waiting for adhan · {p} {t}", until: "listening until {t}", quiet: "quiet — waiting for sound", collecting: "listening… {n}/{m}",
+    detected: "Adhan called", detectedSub: "{p} · at {t} · resets in {d}", testDetectedSub: "test · at {t} · resets in {d}",
+    paused: "Tap the screen", pausedSub: "The browser paused the microphone. Tap anywhere and keep the screen on.",
+    testing: "Microphone test", testingSub: "Recite or play the adhan near the device · {d} left",
+    stOk: "✓ called at {t}", stMiss: "adhan not detected", stListen: "● listening now", stNext: "next · microphone from {t}",
+    stNoListen: "not listened",
+    hintTz: "Device time zone: {tz}. Prayer times are shown in it.",
+    gpsWait: "Locating…", gpsOk: "Done: {lat}, {lng}", gpsErr: "Failed: {e}", gpsNo: "GPS is not available in this browser",
+    near: "Near: {c}", custom: "Custom coordinates", choose: "— choose a city —",
+    journalEmpty: "Nothing yet.", jDetected: "called", jMissed: "not detected", jTest: "test",
+    today: "Today", tomorrow: "Tomorrow",
+    footHint: "Keep the app open and the screen on. Keep the tablet on charge.",
+    polar: "Prayer times cannot be calculated for these coordinates today. Enter the times manually.",
+  },
+};
+const METHOD_NAMES_RU = {
+  MWL: "Всемирная исламская лига (18° / 17°)", ISNA: "ISNA, Северная Америка (15° / 15°)",
+  Egypt: "Египет (19.5° / 17.5°)", Makkah: "Умм аль-Кура, Мекка", Karachi: "Карачи (18° / 18°)",
+  Turkey: "Диянет, Турция (18° / 17°)", Russia: "ДУМ России (16° / 15°)", Tehran: "Тегеран (17.7° / 14°)",
+};
+
+// name RU, name EN, lat, lng, method, asr
+const CITIES = [
+  ["Ташкент", "Tashkent", 41.311, 69.240, "MWL", "hanafi"], ["Самарканд", "Samarkand", 39.654, 66.976, "MWL", "hanafi"],
+  ["Бухара", "Bukhara", 39.768, 64.421, "MWL", "hanafi"], ["Наманган", "Namangan", 40.998, 71.673, "MWL", "hanafi"],
+  ["Андижан", "Andijan", 40.783, 72.344, "MWL", "hanafi"], ["Фергана", "Fergana", 40.389, 71.784, "MWL", "hanafi"],
+  ["Коканд", "Kokand", 40.528, 70.943, "MWL", "hanafi"], ["Карши", "Karshi", 38.861, 65.789, "MWL", "hanafi"],
+  ["Джизак", "Jizzakh", 40.116, 67.842, "MWL", "hanafi"], ["Термез", "Termez", 37.224, 67.278, "MWL", "hanafi"],
+  ["Ургенч", "Urgench", 41.550, 60.631, "MWL", "hanafi"], ["Нукус", "Nukus", 42.460, 59.603, "MWL", "hanafi"],
+  ["Алматы", "Almaty", 43.238, 76.946, "MWL", "hanafi"], ["Астана", "Astana", 51.169, 71.449, "MWL", "hanafi"],
+  ["Шымкент", "Shymkent", 42.341, 69.590, "MWL", "hanafi"], ["Бишкек", "Bishkek", 42.875, 74.570, "MWL", "hanafi"],
+  ["Ош", "Osh", 40.513, 72.816, "MWL", "hanafi"], ["Душанбе", "Dushanbe", 38.560, 68.787, "MWL", "hanafi"],
+  ["Худжанд", "Khujand", 40.283, 69.622, "MWL", "hanafi"], ["Ашхабад", "Ashgabat", 37.960, 58.326, "MWL", "hanafi"],
+  ["Баку", "Baku", 40.409, 49.867, "Tehran", "std"],
+  ["Москва", "Moscow", 55.756, 37.617, "Russia", "hanafi"], ["Санкт-Петербург", "Saint Petersburg", 59.939, 30.316, "Russia", "hanafi"],
+  ["Казань", "Kazan", 55.796, 49.106, "Russia", "hanafi"], ["Уфа", "Ufa", 54.735, 55.959, "Russia", "hanafi"],
+  ["Махачкала", "Makhachkala", 42.983, 47.504, "Russia", "std"], ["Грозный", "Grozny", 43.318, 45.698, "Russia", "std"],
+  ["Нальчик", "Nalchik", 43.485, 43.607, "Russia", "hanafi"], ["Екатеринбург", "Yekaterinburg", 56.838, 60.597, "Russia", "hanafi"],
+  ["Новосибирск", "Novosibirsk", 55.008, 82.936, "Russia", "hanafi"],
+  ["Стамбул", "Istanbul", 41.008, 28.978, "Turkey", "std"], ["Анкара", "Ankara", 39.934, 32.860, "Turkey", "std"],
+  ["Мекка", "Makkah", 21.389, 39.858, "Makkah", "std"], ["Медина", "Madinah", 24.467, 39.611, "Makkah", "std"],
+  ["Дубай", "Dubai", 25.205, 55.271, "Makkah", "std"], ["Каир", "Cairo", 30.044, 31.236, "Egypt", "std"],
+  ["Лондон", "London", 51.507, -0.128, "MWL", "std"], ["Берлин", "Berlin", 52.520, 13.405, "MWL", "std"],
+  ["Нью-Йорк", "New York", 40.713, -74.006, "ISNA", "std"], ["Чикаго", "Chicago", 41.878, -87.630, "ISNA", "std"],
+  ["Торонто", "Toronto", 43.653, -79.383, "ISNA", "std"], ["Сеул", "Seoul", 37.566, 126.978, "MWL", "std"],
+];
+
+// ---------- settings & log (kept on this device) ----------
+const DEFAULTS = { lat: null, lng: null, cityIdx: -1, method: "MWL", asr: "hanafi", pre: 30, post: 30, threshold: 0.7,
+                   lang: "ru", theme: "auto", offsets: {}, manual: {} };
+function load(key, def) { try { const v = JSON.parse(localStorage.getItem(key)); return v ?? def; } catch (e) { return def; } }
+function store(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} }
+const S = Object.assign({}, DEFAULTS, load("adhan.settings", {}));
+let LOG = load("adhan.log", []);
+const saveS = () => store("adhan.settings", S);
+const saveLog = () => { LOG = LOG.slice(-300); store("adhan.log", LOG); };
+
+const T = (k, vars) => { let s = (TXT[S.lang] || TXT.ru)[k] ?? TXT.ru[k] ?? k;
+  if (vars) for (const [a, b] of Object.entries(vars)) s = s.replace(`{${a}}`, b); return s; };
+const hm = d => d ? d.toLocaleTimeString(S.lang === "en" ? "en-GB" : "ru-RU", { hour: "2-digit", minute: "2-digit" }) : "--:--";
+const dayKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function dur(ms) {
+  const m = Math.max(0, Math.ceil(ms / 60000)), h = Math.floor(m / 60), r = m % 60;
+  return h ? `${h} ${T("h")} ${String(r).padStart(2, "0")} ${T("min")}` : `${r} ${T("min")}`;
+}
+function mmss(ms) { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+
+// ---------- prayer schedule ----------
+const schedCache = new Map();
+function schedule(day) {
+  const key = dayKey(day) + JSON.stringify([S.lat, S.lng, S.method, S.asr, S.offsets, S.manual]);
+  if (schedCache.has(key)) return schedCache.get(key);
+  const calc = PrayerTimes.compute(day, S.lat, S.lng, { method: S.method, asr: S.asr });
+  const out = PRAYERS.map(p => {
+    let t = null;
+    const man = S.manual[p];
+    if (man && /^\d{1,2}:\d{2}$/.test(man)) {
+      const [h, m] = man.split(":").map(Number);
+      t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m);
+    } else if (calc[p]) {
+      t = new Date(calc[p].getTime() + (Number(S.offsets[p]) || 0) * 60000);
+      t.setSeconds(0, 0);   // timetables show whole minutes
+    }
+    return { key: p, time: t, day: dayKey(day), id: `${dayKey(day)}:${p}` };
+  });
+  if (schedCache.size > 8) schedCache.clear();
+  schedCache.set(key, out);
+  return out;
+}
+function windows(now) {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(today.getTime() + 36 * 3600e3);
+  const list = [];
+  for (const d of [today, new Date(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate())]) {
+    for (const s of schedule(d)) {
+      if (!LISTEN.includes(s.key) || !s.time) continue;
+      list.push({ ...s, start: new Date(s.time - S.pre * 60000), end: new Date(s.time.getTime() + S.post * 60000) });
+    }
+  }
+  return list;
+}
+const hasPlace = () => typeof S.lat === "number" && typeof S.lng === "number" && !isNaN(S.lat) && !isNaN(S.lng);
+
+// ---------- model ----------
+let cfg, session, inputName, modelReady = false;
+const diag = { error: "", inferMs: 0, steps: 0, rate: 0 };
+window.addEventListener("error", e => { diag.error = String(e.message || e); });
+window.addEventListener("unhandledrejection", e => { diag.error = String(e.reason && e.reason.message || e.reason); });
+
+async function initModel() {
+  try {
+    if (typeof ort === "undefined") throw new Error("onnxruntime did not load");
+    cfg = await (await fetch("config.json", { cache: "no-cache" })).json();
+    ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/";
+    ort.env.wasm.numThreads = 1;
+    const r = await fetch("adhan_detector.onnx");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const total = +r.headers.get("content-length") || 17.3e6, parts = []; let got = 0;
+    const reader = r.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      parts.push(value); got += value.length;
+      $("loadState").textContent = `${T("loading")} ${Math.min(99, Math.round(got / total * 100))}%`;
+    }
+    const model = new Uint8Array(got); let o = 0;
+    for (const c of parts) { model.set(c, o); o += c.length; }
+    session = await ort.InferenceSession.create(model, { executionProviders: ["wasm"] });
+    inputName = session.inputNames[0];
+    const t0 = performance.now(); await predict(new Float32Array(WIN)); diag.inferMs = performance.now() - t0;
+    modelReady = true;
+    $("loadState").textContent = T("modelReady");
+  } catch (e) {
+    console.error(e); diag.error = String(e && e.message || e);
+    $("loadState").innerHTML = `<span class="err">${T("modelErr")}</span>`;
+  }
+}
+async function predict(win) {
+  const out = await session.run({ [inputName]: new ort.Tensor("float32", win, [WIN]) });
+  return out[session.outputNames[0]].data[0];
+}
+
+// ---------- detector (same rule as the device: average of 10 segments ≥ threshold) ----------
+const det = { buf: new Float32Array(0), win: new Float32Array(WIN), probs: [], quietRun: 0, level: -90, p: 0, score: 0,
+              queue: [], busy: false };
+function resetDetector() {
+  det.buf = new Float32Array(0); det.win = new Float32Array(WIN); det.probs = []; det.quietRun = 0;
+  det.p = 0; det.score = 0; det.level = -90; det.queue = [];
+}
+function activeFraction(win) {
+  let active = 0, n = 0;
+  for (let s = 0; s + FRAME <= win.length; s += HOP, n++) {
+    let e = 0;
+    for (let i = s; i < s + FRAME; i++) e += win[i] * win[i];
+    if (10 * Math.log10(e / FRAME + 1e-18) > cfg.silence_db) active++;
+  }
+  return active / Math.max(1, n);
+}
+async function step(chunk) {
+  det.win.copyWithin(0, STEP); det.win.set(chunk, WIN - STEP);
+  let e = 0; for (let i = 0; i < chunk.length; i++) e += chunk[i] * chunk[i];
+  det.level = 10 * Math.log10(e / chunk.length + 1e-18);
+  if (activeFraction(det.win) < cfg.min_active) {
+    det.quietRun++;
+    if (det.quietRun * 2.4 >= 60) det.probs = [];
+  } else {
+    det.quietRun = 0;
+    const t0 = performance.now();
+    det.p = await predict(det.win);
+    diag.inferMs = performance.now() - t0;
+    det.probs.push(det.p);
+    if (det.probs.length > cfg.consecutive) det.probs.shift();
+  }
+  det.score = det.probs.length === cfg.consecutive ? det.probs.reduce((a, b) => a + b, 0) / cfg.consecutive : 0;
+  diag.steps++;
+  if (det.score >= S.threshold && mic.on) onAdhan(det.score);
+}
+async function feed(x) {
+  const merged = new Float32Array(det.buf.length + x.length);
+  merged.set(det.buf); merged.set(x, det.buf.length);
+  let off = 0;
+  while (merged.length - off >= STEP && mic.on) { await step(merged.subarray(off, off + STEP)); off += STEP; }
+  det.buf = merged.slice(off);
+}
+function enqueue(x) {
+  det.queue.push(x);
+  if (det.busy) return;
+  det.busy = true;
+  (async () => {
+    try {
+      while (det.queue.length && mic.on) {
+        const parts = det.queue.splice(0);
+        let len = parts.reduce((a, b) => a + b.length, 0);
+        while (len > 20 * SR && parts.length > 1) len -= parts.shift().length;   // slow device: drop old audio
+        const all = new Float32Array(len); let o = 0;
+        for (const p of parts) { all.set(p, o); o += p.length; }
+        await feed(all);
+      }
+    } catch (e) { console.error(e); diag.error = String(e && e.message || e); }
+    finally { det.busy = false; }
+  })();
+}
+window.__feed = x => enqueue(x);   // used for testing with a recorded file
+
+// last 5 minutes of audio, kept in memory so it can be downloaded and sent to us
+const RING = new Int16Array(5 * 60 * SR); let ringPos = 0, ringFill = 0;
+function keep(x) {
+  for (let i = 0; i < x.length; i++) {
+    RING[ringPos] = Math.max(-32768, Math.min(32767, x[i] * 32767));
+    ringPos = (ringPos + 1) % RING.length;
+  }
+  ringFill = Math.min(RING.length, ringFill + x.length);
+}
+
+// ---------- microphone ----------
+let ctx = null, wakeLock = null, needTap = false;
+const mic = { retryAt: 0, on: false, stream: null, proc: null, src: null, win: null, test: false, testEnd: 0 };
+
+function makeResampler(inRate) {
+  const ratio = inRate / SR, taps = Math.max(1, Math.round(ratio));
+  let hist = new Float32Array(0), pos = 0;
+  return x => {
+    const data = new Float32Array(hist.length + x.length);
+    data.set(hist); data.set(x, hist.length);
+    const sm = new Float32Array(data.length);
+    let acc = 0;
+    for (let i = 0; i < data.length; i++) { acc += data[i]; if (i >= taps) acc -= data[i - taps]; sm[i] = acc / Math.min(i + 1, taps); }
+    const out = [];
+    while (pos + 1 < sm.length) { const i = Math.floor(pos), f = pos - i; out.push(sm[i] * (1 - f) + sm[i + 1] * f); pos += ratio; }
+    const k = Math.max(0, Math.floor(pos) - taps);
+    hist = data.slice(k); pos -= k;
+    return Float32Array.from(out);
+  };
+}
+
+async function micOn(win, test) {
+  if (mic.on || !ctx) return;
+  mic.on = true; mic.win = win; mic.test = !!test; mic.testEnd = test ? Date.now() + TEST_MIN * 60000 : 0;
+  resetDetector();
+  try {
+    mic.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) {
+    mic.on = false; mic.retryAt = Date.now() + 30000; diag.error = "mic: " + (e && e.message || e); return;
+  }
+  if (!mic.on) { mic.stream.getTracks().forEach(t => t.stop()); return; }   // stopped while waiting for permission
+  if (ctx.state !== "running") { try { await ctx.resume(); } catch (e) {} }
+  diag.rate = ctx.sampleRate;
+  const resample = makeResampler(ctx.sampleRate);
+  mic.src = ctx.createMediaStreamSource(mic.stream);
+  mic.proc = ctx.createScriptProcessor(4096, 1, 1);
+  mic.proc.onaudioprocess = ev => { const x = resample(ev.inputBuffer.getChannelData(0)); keep(x); enqueue(x); };
+  mic.src.connect(mic.proc);
+  const mute = ctx.createGain(); mute.gain.value = 0; mic.proc.connect(mute); mute.connect(ctx.destination);
+}
+function micOff() {
+  mic.on = false;
+  if (mic.proc) { mic.proc.onaudioprocess = null; mic.proc.disconnect(); mic.proc = null; }
+  if (mic.src) { mic.src.disconnect(); mic.src = null; }
+  if (mic.stream) { mic.stream.getTracks().forEach(t => t.stop()); mic.stream = null; }
+  mic.win = null; mic.test = false;
+  det.queue = [];
+}
+
+async function keepAwake() { try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) {} }
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && ctx) { keepAwake(); if (ctx.state !== "running") needTap = true; }
+});
+document.addEventListener("click", () => {
+  if (needTap && ctx) ctx.resume().then(() => { needTap = ctx.state !== "running"; });
+}, true);
+
+async function startApp() {
+  $("startBtn").disabled = true;
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const resumed = ctx.resume();
+  try {   // ask for the microphone once now, so later windows can open it without a tap
+    const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+    s.getTracks().forEach(t => t.stop());
+  } catch (e) {
+    $("startText").innerHTML = `<span class="err">${T("micErr")}</span>`;
+    $("startBtn").disabled = false; ctx.close(); ctx = null; return;
+  }
+  await Promise.race([resumed.catch(() => {}), new Promise(r => setTimeout(r, 1500))]);   // never hang here
+  ctx.onstatechange = () => { if (ctx.state !== "running") needTap = true; };
+  keepAwake();
+  $("start").classList.remove("show");
+  try { if (document.documentElement.requestFullscreen && !document.fullscreenElement)
+          document.documentElement.requestFullscreen().catch(() => {}); } catch (e) {}
+  if (!hasPlace()) openSettings();
+  tick();
+}
+
+// ---------- the schedule loop ----------
+const app = { doneIds: new Set(load("adhan.done", [])), detectedAt: 0, detectedWhat: null };
+const markDone = id => { app.doneIds.add(id); store("adhan.done", [...app.doneIds].slice(-40)); };
+
+function onAdhan(score) {
+  const now = new Date();
+  const w = mic.win, test = mic.test;
+  LOG.push({ at: now.toISOString(), prayer: test ? "test" : w.key, prayerTime: test ? null : w.time.toISOString(),
+             result: "detected", score: +score.toFixed(3) });
+  saveLog();
+  if (w) markDone(w.id);
+  app.detectedAt = now.getTime(); app.detectedWhat = test ? "test" : w.key;
+  micOff();   // stay off until the next prayer: the iqama must not trigger again
+}
+
+function tick() {
+  const now = new Date();
+  if (app.detectedAt && now - app.detectedAt >= RESET_MIN * 60000) { app.detectedAt = 0; app.detectedWhat = null; }
+  if (ctx && hasPlace()) {
+    const active = windows(now).find(w => now >= w.start && now < w.end && !app.doneIds.has(w.id));
+    if (mic.on && mic.test) {
+      if (Date.now() >= mic.testEnd) micOff();
+    } else if (mic.on && (!active || active.id !== mic.win.id)) {
+      // window over without an adhan
+      LOG.push({ at: now.toISOString(), prayer: mic.win.key, prayerTime: mic.win.time.toISOString(), result: "missed" });
+      saveLog(); markDone(mic.win.id); micOff();
+    }
+    if (!mic.on && active && modelReady && !app.detectedAt && Date.now() >= mic.retryAt) micOn(active, false);
+  }
+  render(now);
+}
+setInterval(tick, 1000);
+
+// ---------- render ----------
+function setStatus(cls, tag, big, sub) {
+  $("status").className = "status " + cls; $("tag").textContent = tag; $("big").textContent = big; $("sub").textContent = sub;
+}
+function render(now) {
+  $("clock").innerHTML = now.toLocaleTimeString(S.lang === "en" ? "en-GB" : "ru-RU", { hour: "2-digit", minute: "2-digit" }) +
+    `<small>${String(now.getSeconds()).padStart(2, "0")}</small>`;
+  const loc = S.lang === "en" ? "en-GB" : "ru-RU";
+  let hijri = "";
+  try { hijri = new Intl.DateTimeFormat(`${loc}-u-ca-islamic-umalqura`, { day: "numeric", month: "long", year: "numeric" }).format(now); } catch (e) {}
+  $("date").textContent = now.toLocaleDateString(loc, { weekday: "long", day: "numeric", month: "long" }) + (hijri ? " · " + hijri : "");
+  const c = CITIES[S.cityIdx];
+  $("place").textContent = hasPlace() ? (c ? c[S.lang === "en" ? 1 : 0] : `${S.lat.toFixed(3)}, ${S.lng.toFixed(3)}`) : T("noPlace");
+
+  $("meters").hidden = !mic.on;
+  $("testBtn").textContent = mic.on && mic.test ? T("stopTest") : T("testNow");
+  $("testBtn").disabled = !ctx || !modelReady || (mic.on && !mic.test);
+  $("resetBtn").hidden = !app.detectedAt;
+
+  if (!hasPlace()) {
+    setStatus("alert", T("tagSetup"), T("noPlace"), T("noPlaceSub"));
+    $("prayers").innerHTML = ""; $("hint").textContent = ""; return;
+  }
+
+  const wins = windows(now);
+  const upcoming = wins.find(w => w.end > now && !app.doneIds.has(w.id));
+  // after the last prayer of the day, show tomorrow's times
+  const showTomorrow = upcoming && upcoming.day !== dayKey(now) && !(mic.on && !mic.test) && !app.detectedAt;
+  const listDate = showTomorrow ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+                                : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = schedule(listDate);
+  $("listDay").textContent = showTomorrow ? T("tomorrow") : T("today");
+  const name = k => T(k);
+
+  if (needTap && ctx) {
+    setStatus("alert", T("tagPause"), T("paused"), T("pausedSub"));
+  } else if (app.detectedAt) {
+    const left = RESET_MIN * 60000 - (now - app.detectedAt), at = hm(new Date(app.detectedAt));
+    setStatus("done", app.detectedWhat === "test" ? T("tagTest") : name(app.detectedWhat), T("detected"), app.detectedWhat === "test"
+      ? T("testDetectedSub", { t: at, d: mmss(left) })
+      : T("detectedSub", { p: name(app.detectedWhat), t: at, d: mmss(left) }));
+  } else if (mic.on && mic.test) {
+    setStatus("listen", T("tagTest"), T("testing"), T("testingSub", { d: mmss(mic.testEnd - Date.now()) }));
+  } else if (mic.on) {
+    const w = mic.win;
+    const sub = det.quietRun > 0 ? T("quiet") : det.probs.length < cfg.consecutive
+      ? T("collecting", { n: det.probs.length, m: cfg.consecutive }) : T("until", { t: hm(w.end) });
+    setStatus("listen", T("tagListen"), T("waitAdhan", { p: name(w.key), t: hm(w.time) }), sub);
+  } else if (upcoming) {
+    const micTxt = upcoming.start <= now ? T("micAtNow") : T("micAt", { t: hm(upcoming.start) });
+    setStatus("", T("tagWait"), T("next", { p: name(upcoming.key), t: hm(upcoming.time) }),
+      `${T("inTime", { d: dur(upcoming.time - now) })} · ${micTxt}`);
+  } else {
+    setStatus("alert", T("tagSetup"), T("noPlace"), T("polar"));
+  }
+
+  if (mic.on) {
+    $("dbv").textContent = `${det.level.toFixed(0)} dB`;
+    $("dbBar").style.width = `${Math.max(0, Math.min(100, (det.level + 70) / 70 * 100))}%`;
+    $("scv").textContent = det.score.toFixed(2);
+    $("scBar").style.width = `${Math.max(0, det.score) * 100}%`;
+    $("thrMark").style.left = `${S.threshold * 100}%`;
+  }
+
+  // prayer list
+  const todayKey = dayKey(now);
+  const logFor = id => LOG.slice().reverse().find(l => l.prayer !== "test" && l.prayerTime &&
+    `${dayKey(new Date(new Date(l.prayerTime)))}:${l.prayer}` === id);
+  $("prayers").innerHTML = today.map(s => {
+    const listen = LISTEN.includes(s.key);
+    const isNext = upcoming && upcoming.id === s.id;
+    let state = "", cls = "";
+    if (!listen) state = "";
+    else if (mic.on && !mic.test && mic.win.id === s.id) { state = T("stListen"); cls = "listen"; }
+    else {
+      const l = logFor(s.id);
+      if (l && l.result === "detected") { state = T("stOk", { t: hm(new Date(l.at)) }); cls = "ok"; }
+      else if (l && l.result === "missed") { state = T("stMiss"); cls = "miss"; }
+      else if (isNext) state = T("stNext", { t: hm(upcoming.start) });
+    }
+    return `<li class="${listen ? "" : "muted"} ${isNext ? "next" : ""}"><span class="name">${name(s.key)}</span>` +
+      `<span class="time">${hm(s.time)}</span>${state ? `<span class="state ${cls}">${state}</span>` : ""}</li>`;
+  }).join("");
+  $("hint").textContent = T("footHint");
+  void todayKey;
+}
+
+// ---------- settings ----------
+function applyTheme() {
+  if (S.theme === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", S.theme);
+}
+function applyLang() {
+  document.documentElement.lang = S.lang;
+  document.title = T("appName");
+  document.querySelectorAll("[data-t]").forEach(el => { el.textContent = T(el.dataset.t); });
+  document.querySelectorAll("#pre button, #post button").forEach(b => { b.textContent = `${b.dataset.v} ${T("min")}`; });
+  fillSettings();
+}
+function seg(id, value, onPick) {
+  const el = $(id);
+  el.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === String(value)));
+  el.onclick = ev => { const v = ev.target.dataset && ev.target.dataset.v; if (v !== undefined) onPick(v); };
+}
+function fillSettings() {
+  const en = S.lang === "en";
+  $("city").innerHTML = `<option value="-1">${hasPlace() && S.cityIdx < 0 ? T("custom") : T("choose")}</option>` +
+    CITIES.map((c, i) => `<option value="${i}">${c[en ? 1 : 0]}</option>`).join("");
+  $("city").value = String(S.cityIdx);
+  $("lat").value = hasPlace() ? S.lat : ""; $("lng").value = hasPlace() ? S.lng : "";
+  $("method").innerHTML = Object.entries(PrayerTimes.METHODS)
+    .map(([k, m]) => `<option value="${k}">${en ? m.name : METHOD_NAMES_RU[k]}</option>`).join("");
+  $("method").value = S.method; $("asr").value = S.asr;
+  $("tzHint").textContent = T("hintTz", { tz: Intl.DateTimeFormat().resolvedOptions().timeZone || "?" });
+  const today = hasPlace() ? schedule(new Date()) : [];
+  $("adj").innerHTML = `<tr><td></td><td class="hint">${T("offset")}</td><td class="hint">${T("manual")}</td><td></td></tr>` +
+    LISTEN.map(p => {
+      const s = today.find(x => x.key === p);
+      return `<tr><td>${T(p)}</td><td><input type="number" step="1" data-off="${p}" value="${S.offsets[p] || 0}"></td>` +
+        `<td><input type="time" data-man="${p}" value="${S.manual[p] || ""}"></td>` +
+        `<td class="hint" style="text-align:right">${s ? hm(s.time) : ""}</td></tr>`;
+    }).join("");
+  seg("pre", S.pre, v => { S.pre = +v; saveS(); fillSettings(); });
+  seg("post", S.post, v => { S.post = +v; saveS(); fillSettings(); });
+  seg("thr", S.threshold, v => { S.threshold = +v; saveS(); fillSettings(); });
+  seg("lang", S.lang, v => { S.lang = v; saveS(); applyLang(); });
+  seg("theme", S.theme, v => { S.theme = v; saveS(); applyTheme(); fillSettings(); });
+  renderJournal();
+  $("diag").textContent = [`model: ${modelReady ? "ok" : "–"}`, `audio: ${ctx ? ctx.state : "–"}`, `rate: ${diag.rate || "–"}`,
+    `inference: ${diag.inferMs ? diag.inferMs.toFixed(0) + " ms" : "–"}`, `steps: ${diag.steps}`,
+    diag.error ? `error: ${diag.error}` : ""].filter(Boolean).join(" · ");
+}
+function renderJournal() {
+  const rows = LOG.slice(-12).reverse().map(l => {
+    const d = new Date(l.at);
+    const what = l.prayer === "test" ? T("jTest") : T(l.prayer);
+    const res = l.result === "detected" ? `${T("jDetected")} (${l.score})` : T("jMissed");
+    return `${d.toLocaleDateString(S.lang === "en" ? "en-GB" : "ru-RU", { day: "numeric", month: "short" })} ${hm(d)} — ${what}: ${res}`;
+  });
+  $("journal").innerHTML = rows.length ? rows.join("<br>") : T("journalEmpty");
+}
+function nearestCity(lat, lng) {
+  let best = -1, bd = 1e9;
+  CITIES.forEach((c, i) => {
+    const dy = (c[2] - lat) * 111, dx = (c[3] - lng) * 111 * Math.cos(lat * Math.PI / 180), d = Math.hypot(dx, dy);
+    if (d < bd) { bd = d; best = i; }
+  });
+  return bd < 40 ? best : -1;
+}
+function setPlace(lat, lng, idx) {
+  S.lat = +lat; S.lng = +lng; S.cityIdx = idx;
+  if (idx >= 0) { S.method = CITIES[idx][4]; S.asr = CITIES[idx][5]; }
+  saveS(); fillSettings(); tick();
+}
+function openSettings() { fillSettings(); $("settings").classList.add("show"); }
+$("openSettings").onclick = openSettings;
+$("closeSettings").onclick = () => { $("settings").classList.remove("show"); tick(); };
+$("city").onchange = e => { const i = +e.target.value; if (i >= 0) setPlace(CITIES[i][2], CITIES[i][3], i); };
+const coordChange = () => {
+  const la = parseFloat($("lat").value), ln = parseFloat($("lng").value);
+  if (!isNaN(la) && !isNaN(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180) setPlace(la, ln, nearestCity(la, ln) >= 0 ? S.cityIdx : -1);
+};
+$("lat").onchange = coordChange; $("lng").onchange = coordChange;
+$("method").onchange = e => { S.method = e.target.value; saveS(); fillSettings(); tick(); };
+$("asr").onchange = e => { S.asr = e.target.value; saveS(); fillSettings(); tick(); };
+$("adj").onchange = e => {
+  const t = e.target;
+  if (t.dataset.off) S.offsets[t.dataset.off] = Math.max(-60, Math.min(60, parseInt(t.value) || 0));
+  if (t.dataset.man !== undefined) { if (t.value) S.manual[t.dataset.man] = t.value; else delete S.manual[t.dataset.man]; }
+  saveS(); fillSettings(); tick();
+};
+$("gpsBtn").onclick = () => {
+  if (!navigator.geolocation) { $("gpsState").textContent = T("gpsNo"); return; }
+  $("gpsState").textContent = T("gpsWait");
+  navigator.geolocation.getCurrentPosition(pos => {
+    const la = +pos.coords.latitude.toFixed(4), ln = +pos.coords.longitude.toFixed(4), idx = nearestCity(la, ln);
+    S.lat = la; S.lng = ln; S.cityIdx = idx; saveS();   // keep the user's method choice; GPS only sets the place
+    fillSettings(); tick();
+    $("gpsState").textContent = T("gpsOk", { lat: la, lng: ln }) + (idx >= 0 ? " · " + T("near", { c: CITIES[idx][S.lang === "en" ? 1 : 0] }) : "");
+  }, err => { $("gpsState").textContent = T("gpsErr", { e: err.message || err.code }); },
+  { enableHighAccuracy: true, timeout: 20000, maximumAge: 600000 });
+};
+
+// ---------- buttons ----------
+$("startBtn").onclick = startApp;
+$("testBtn").onclick = () => {
+  if (mic.on && mic.test) { micOff(); tick(); return; }
+  if (!mic.on) { app.detectedAt = 0; micOn(null, true).then(tick); }
+};
+$("resetBtn").onclick = () => { app.detectedAt = 0; app.detectedWhat = null; tick(); };
+
+// ---------- downloads ----------
+function save(blob, name) {
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+$("dlWav").onclick = () => {
+  const n = ringFill; if (!n) return;
+  const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt "); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+  const out = new Int16Array(buf, 44, n), startAt = (ringPos - n + RING.length) % RING.length;
+  for (let i = 0; i < n; i++) out[i] = RING[(startAt + i) % RING.length];
+  save(new Blob([buf], { type: "audio/wav" }), `adhan-app-${stamp()}.wav`);
+};
+$("dlLog").onclick = () => save(new Blob([JSON.stringify({ created: new Date().toISOString(), userAgent: navigator.userAgent,
+  settings: { ...S, lat: S.lat, lng: S.lng }, config: cfg, diag, log: LOG }, null, 1)], { type: "application/json" }),
+  `adhan-app-log-${stamp()}.json`);
+
+// ---------- go ----------
+applyTheme(); applyLang();
+render(new Date());
+initModel();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
