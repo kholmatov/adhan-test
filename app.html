@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Детектор азана</title>
-<meta name="description" content="Слушает азан в окна намазов и показывает «Азан прозвучал». Время намазов считается по городу или GPS, без интернета.">
+<title>Adhan Detector</title>
+<meta name="description" content="Listens for the adhan around each prayer time and shows when it has been called. Prayer times come from your city or GPS and work offline.">
 <meta name="theme-color" content="#165c3e">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
@@ -364,10 +364,11 @@ const CITIES = [
 
 // ---------- settings & log (kept on this device) ----------
 const DEFAULTS = { lat: null, lng: null, cityIdx: -1, method: "MWL", asr: "hanafi", pre: 30, post: 30, threshold: 0.7,
-                   lang: "ru", theme: "auto", offsets: {}, manual: {} };
+                   lang: "en", theme: "auto", offsets: {}, manual: {} };
 function load(key, def) { try { const v = JSON.parse(localStorage.getItem(key)); return v ?? def; } catch (e) { return def; } }
 function store(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} }
 const S = Object.assign({}, DEFAULTS, load("adhan.settings", {}));
+if (!S.langSet) S.lang = "en";   // English by default; Russian only when picked in settings
 let LOG = load("adhan.log", []);
 const saveS = () => store("adhan.settings", S);
 const saveLog = () => { LOG = LOG.slice(-300); store("adhan.log", LOG); };
@@ -765,7 +766,7 @@ function fillSettings() {
   seg("pre", S.pre, v => { S.pre = +v; saveS(); fillSettings(); });
   seg("post", S.post, v => { S.post = +v; saveS(); fillSettings(); });
   seg("thr", S.threshold, v => { S.threshold = +v; saveS(); fillSettings(); });
-  seg("lang", S.lang, v => { S.lang = v; saveS(); applyLang(); });
+  seg("lang", S.lang, v => { S.lang = v; S.langSet = true; saveS(); applyLang(); });
   seg("theme", S.theme, v => { S.theme = v; saveS(); applyTheme(); fillSettings(); });
   renderJournal();
   $("diag").textContent = [`model: ${modelReady ? "ok" : "–"}`, `audio: ${ctx ? ctx.state : "–"}`, `rate: ${diag.rate || "–"}`,

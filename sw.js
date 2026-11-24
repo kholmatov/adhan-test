@@ -1,7 +1,7 @@
 // Offline support: the app keeps working without internet once it has loaded once.
 // Pages and config: network first (updates arrive), cache as fallback.
 // Model and onnxruntime files: served from cache, refreshed in the background.
-const CACHE = "adhan-app-v1";
+const CACHE = "adhan-app-v2";
 const CORE = ["app.html", "prayer.js", "config.json", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png",
               "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"];
 

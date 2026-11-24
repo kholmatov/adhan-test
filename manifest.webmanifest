@@ -1,7 +1,7 @@
 {
-  "name": "Детектор азана",
-  "short_name": "Азан",
-  "description": "Слушает азан в окна намазов и показывает «Азан прозвучал». Работает без интернета.",
+  "name": "Adhan Detector",
+  "short_name": "Adhan",
+  "description": "Listens for the adhan around each prayer time and shows when it has been called. Works offline.",
   "start_url": "app.html",
   "scope": "./",
   "display": "fullscreen",
